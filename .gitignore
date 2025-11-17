@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+
+# Data & output
+data/raw/*
+data/processed/*
+!data/processed/.gitkeep
+reports/*
+!reports/.gitkeep
+
+# Models
+models/*.pkl
+models/*.joblib
+
+# Logs & cache
+*.log
+.ipynb_checkpoints/
