@@ -1,8 +1,7 @@
-# LeafHealthAI - requirements.txt
 numpy==1.26.4
 opencv-python==4.10.0.84
 scikit-image==0.24.0
-scikit-learn==1.5.1
 matplotlib==3.9.2
 Pillow==10.4.0
 reportlab==4.2.5
+ttkbootstrap>=1.10.1
