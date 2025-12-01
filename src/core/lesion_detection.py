@@ -1,12 +1,12 @@
 # src/core/lesion_detection.py
 import cv2
 import numpy as np
-from skimage import color
 from ..utils.helpers import overlay_contours
 
-def detect_lesions(image_rgb, leaf_mask, a_star_thresh=130, min_area=200):
+def detect_lesions(image_rgb, leaf_mask, hue_min=0, hue_max=40, min_area=150):
     """
-    Deteksi lesi menggunakan thresholding saluran a* (Lab).
+    Deteksi lesi menggunakan thresholding saluran Hue (HSV).
+    Lesi bakteri = hitam/coklat → Hue rendah.
     Returns: (lesion_mask, lesion_contours, overlay_with_red_lesions)
     """
     if leaf_mask is None or not leaf_mask.any():
@@ -14,10 +14,11 @@ def detect_lesions(image_rgb, leaf_mask, a_star_thresh=130, min_area=200):
         lesion_mask = np.zeros((h, w), dtype=np.uint8)
         return lesion_mask, [], image_rgb.copy()
 
-    lab = color.rgb2lab(image_rgb)
-    a_star = lab[:, :, 1]  # a*: hijau (-) → merah (+)
+    hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
+    hue_channel = hsv[:, :, 0]  # Hue: 0-179 (OpenCV)
 
-    _, lesion_thresh = cv2.threshold(a_star.astype(np.uint8), a_star_thresh, 255, cv2.THRESH_BINARY)
+    # Buat mask lesi berdasarkan Hue (lesion: Hue rendah = hitam/coklat)
+    lesion_thresh = cv2.inRange(hue_channel, hue_min, hue_max)
 
     # Batasi hanya di area daun
     lesion_thresh = cv2.bitwise_and(lesion_thresh, lesion_thresh, mask=leaf_mask)

@@ -1,8 +1,7 @@
 # src/core/classifier.py
-
 def classify_condition(features):
     """
-    Klasifikasi berbasis aturan (sesuai PDF).
+    Klasifikasi KHUSUS daun mangga: hanya Bakteri vs Sehat.
     Returns: (label, confidence, recommendation)
     """
     hue = features['median_hue']
@@ -11,17 +10,13 @@ def classify_condition(features):
     circularity = features['avg_circularity']
     num_lesions = features['num_lesions']
 
-    # Sehat: lesi sangat kecil atau tidak ada
-    if area_ratio < 0.02 or num_lesions == 0:
-        return "🌱 Sehat", 1.0, "Daun dalam kondisi baik. Pertahankan pemeliharaan rutin."
+    # Jika TIDAK ADA lesi → anggap sehat
+    if num_lesions == 0 or area_ratio < 0.01:
+        return "🌱 Sehat", 0.95, "Daun mangga tampak sehat. Pertahankan perawatan."
 
-    # Jamur: lesi coklat/kuning (hue rendah), entropy tinggi, area besar
-    if entropy > 0.7 and hue < 35 and area_ratio > 0.05:
-        return "🍄 Jamur", 0.85, "Gunakan fungisida berbasis tembaga atau chlorothalonil. Pangkas daun sakit."
+    # Bakteri (Bacterial Black Spot): bercak hitam/basah, tepi kuning, circularity rendah
+    if hue < 40 and circularity < 0.6 and area_ratio > 0.015:
+        return "🦠 Bakteri (Black Spot)", 0.85, "Kemungkinan Bacterial Black Spot. Hindari siram daun. Gunakan tembaga + streptomycin jika tersedia. Tingkatkan sirkulasi udara."
 
-    # Bakteri: lesi basah, tepi kuning (hue 40-70), circularity rendah
-    if 40 < hue < 70 and circularity < 0.6 and area_ratio > 0.03:
-        return "🦠 Bakteri", 0.80, "Hindari siram daun. Gunakan bakterisida (misal: streptomycin). Tingkatkan sirkulasi udara."
-
-    # Default: Hama atau defisiensi nutrisi
-    return "🐛 Hama/Defisiensi", 0.75, "Periksa adanya serangga. Berikan pupuk NPK seimbang atau kalsium jika ujung daun mengering."
+    # Jika masih ada lesi tapi tidak memenuhi kriteria ketat → tetap anggap bakteri
+    return "🦠 Bakteri (kemungkinan)", 0.75, "Lesi terdeteksi — cenderung bakteri pada daun mangga."
