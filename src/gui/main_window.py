@@ -5,14 +5,12 @@ import tempfile
 import threading
 from tkinter import filedialog, messagebox
 from datetime import datetime
-
 from PIL import Image, ImageDraw, ImageTk
 import cv2
 import numpy as np
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
-# Core modules
 from ..core.segmentation import segment_leaf
 from ..core.lesion_detection import detect_lesions
 from ..core.feature_extraction import extract_features
@@ -23,9 +21,9 @@ from ..utils.helpers import load_image, save_image
 class LeafHealthAIApp:
     def __init__(self):
         self.root = ttk.Window(themename="morph")
-        self.root.title("LeafHealthAI — Deteksi & Klasifikasi Penyakit Daun")
-        self.root.geometry("1350x780")
-        self.root.minsize(1000, 650)
+        self.root.title("LeafHealthAI — Deteksi Penyakit Daun Mangga (Jamur/Bakteri)")
+        self.root.geometry("1400x800")
+        self.root.minsize(1200, 700)
 
         try:
             icon = self._create_icon()
@@ -50,21 +48,22 @@ class LeafHealthAIApp:
         return ImageTk.PhotoImage(img)
 
     def setup_ui(self):
+        # Navbar
         navbar = ttk.Frame(self.root, bootstyle="dark", padding=5)
         navbar.pack(fill="x")
         ttk.Label(navbar, text="LeafHealthAI", font=("Segoe UI", 16, "bold"), foreground="white").pack(side="left", padx=10)
-        ttk.Label(navbar, text="Deteksi & Klasifikasi Penyakit Daun Berbasis Citra Digital",
-                  font=("Segoe UI", 10), foreground="lightgray").pack(side="left", padx=(0, 20))
+        ttk.Label(navbar, text="Deteksi Jamur/Bakteri pada Daun Mangga", font=("Segoe UI", 10), foreground="lightgray").pack(side="left", padx=(0, 20))
         ttk.Button(navbar, text="ℹ️ Panduan", bootstyle="light-outline", command=self.show_help).pack(side="right", padx=5)
 
+        # Main frame
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
+        # Control panel
         control_frame = ttk.Labelframe(main_frame, text="Parameter & Kontrol", padding=10)
         control_frame.pack(side="left", fill="y", expand=False, padx=(0, 10))
 
-        self.upload_btn = ttk.Button(control_frame, text="Upload Citra Daun", bootstyle="success-outline",
-                                     command=self.upload_image, width=25)
+        self.upload_btn = ttk.Button(control_frame, text="Upload Citra Daun", bootstyle="success-outline", command=self.upload_image, width=25)
         self.upload_btn.pack(pady=(0, 15), ipady=5)
 
         seg_frame = ttk.Labelframe(control_frame, text="Segmentasi Daun (HSV)", padding=8)
@@ -76,7 +75,6 @@ class LeafHealthAIApp:
         self._add_slider(seg_frame, "Hue Max", self.h_max_var, 0, 179)
         self._add_slider(seg_frame, "Sat Min", self.s_min_var, 0, 255)
 
-        # 🔴 GANTI: Deteksi Lesi (Lab a*) → Deteksi Lesi (Hue)
         lesion_frame = ttk.Labelframe(control_frame, text="Deteksi Lesi (Hue)", padding=8)
         lesion_frame.pack(fill="x", pady=(0, 15))
         self.hue_min_var = tk.IntVar(value=0)
@@ -84,26 +82,37 @@ class LeafHealthAIApp:
         self._add_slider(lesion_frame, "Hue Min", self.hue_min_var, 0, 179)
         self._add_slider(lesion_frame, "Hue Max", self.hue_max_var, 0, 179)
 
-        self.analyze_btn = ttk.Button(control_frame, text="Analisis Sekarang", bootstyle="primary",
-                                      command=self.start_analysis, width=25)
+        self.analyze_btn = ttk.Button(control_frame, text="Analisis Sekarang", bootstyle="primary", command=self.start_analysis, width=25)
         self.analyze_btn.pack(pady=10, ipady=5)
 
-        self.save_btn = ttk.Button(control_frame, text="Simpan Laporan (PDF)", bootstyle="warning-outline",
-                                   command=self.save_report, state="disabled")
+        self.save_btn = ttk.Button(control_frame, text="Simpan Laporan (PDF)", bootstyle="warning-outline", command=self.save_report, state="disabled")
         self.save_btn.pack(pady=5, ipady=3)
 
-        self.compare_btn = ttk.Button(control_frame, text="Bandingkan dengan Daun Sehat", bootstyle="info-outline",
-                                      command=self.show_comparison, state="disabled")
-        self.compare_btn.pack(pady=5, ipady=3)
-
-        viz_frame = ttk.Labelframe(main_frame, text="Visualisasi Hasil", padding=5)
+        # 4-panel visualisasi
+        viz_frame = ttk.Labelframe(main_frame, text="Tahapan Praproses & Visualisasi", padding=5)
         viz_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        self.canvas = tk.Canvas(viz_frame, bg="#fafafa", highlightthickness=1, highlightbackground="#ddd")
-        self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
-        self.placeholder_lbl = ttk.Label(viz_frame, text="Upload citra daun untuk memulai analisis.",
-                                         font=("Segoe UI", 12, "italic"), foreground="#666")
-        self.placeholder_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
+        stages_frame = ttk.Frame(viz_frame)
+        stages_frame.pack(fill="both", expand=True)
+
+        stage_labels = ["📸 Original", "🌿 Segmentasi Daun", "🔴 Deteksi Lesi", "✅ Hasil Diagnosa"]
+        self.stage_canvases = []
+        self.stage_labels = []
+
+        for i, title in enumerate(stage_labels):
+            col = ttk.Labelframe(stages_frame, text=title, padding=3)
+            col.grid(row=0, column=i, padx=3, pady=3, sticky="nsew")
+            stages_frame.columnconfigure(i, weight=1)
+
+            canvas = tk.Canvas(col, bg="#fafafa", width=280, height=280, highlightthickness=1, highlightbackground="#ddd")
+            canvas.pack(fill="both", expand=True)
+            self.stage_canvases.append(canvas)
+
+            lbl = ttk.Label(col, text="Belum diproses", font=("Segoe UI", 8, "italic"), foreground="#777")
+            lbl.pack(pady=1)
+            self.stage_labels.append(lbl)
+
+        # Hasil diagnosa (panel kanan)
         result_frame = ttk.Labelframe(main_frame, text="Hasil Diagnosa", padding=10)
         result_frame.pack(side="left", fill="both", expand=True)
 
@@ -115,8 +124,7 @@ class LeafHealthAIApp:
         self.conf_label.pack()
 
         ttk.Label(result_frame, text="Rekomendasi:", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        self.recom_text = tk.Text(result_frame, height=4, wrap="word", font=("Segoe UI", 10),
-                                  bg=self.root.cget("background"), relief="flat", state="disabled")
+        self.recom_text = tk.Text(result_frame, height=4, wrap="word", font=("Segoe UI", 10), bg=self.root.cget("background"), relief="flat", state="disabled")
         self.recom_text.pack(fill="x", pady=(5, 15))
 
         self.feat_frame = ttk.Labelframe(result_frame, text="Fitur yang Diekstraksi", padding=8)
@@ -129,49 +137,49 @@ class LeafHealthAIApp:
         self.feat_tree.pack(fill="both", expand=True, pady=2)
 
         self.status_var = tk.StringVar(value="Siap. Upload citra daun untuk mulai.")
-        ttk.Label(self.root, textvariable=self.status_var, font=("Segoe UI", 9), bootstyle="secondary",
-                  relief="sunken", anchor="w").pack(side="bottom", fill="x")
+        ttk.Label(self.root, textvariable=self.status_var, font=("Segoe UI", 9), bootstyle="secondary", relief="sunken", anchor="w").pack(side="bottom", fill="x")
 
     def _add_slider(self, parent, label, var, min_val, max_val):
         frame = ttk.Frame(parent)
         frame.pack(fill="x", pady=4)
         ttk.Label(frame, text=label, font=("Segoe UI", 9)).pack(anchor="w")
-        ttk.Scale(frame, from_=min_val, to=max_val, variable=var, orient="horizontal").pack(fill="x", pady=(2, 0))
+        slider = ttk.Scale(frame, from_=min_val, to=max_val, variable=var, orient="horizontal")
+        slider.pack(fill="x", pady=(2, 0))
+        slider.bind("<ButtonRelease-1>", lambda e: var.set(int(var.get())))
         ttk.Label(frame, textvariable=var, font=("Courier", 8), foreground="#666").pack(anchor="e")
 
+    def display_stage_image(self, stage_idx, img_rgb):
+        canvas = self.stage_canvases[stage_idx]
+        h, w = img_rgb.shape[:2]
+        cw, ch = 280, 280
+        scale = min(cw / w, ch / h)
+        nw, nh = int(w * scale), int(h * scale)
+        img_resized = cv2.resize(img_rgb, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+        tk_img = ImageTk.PhotoImage(Image.fromarray(img_resized))
+        canvas.delete("all")
+        x, y = (cw - nw) // 2, (ch - nh) // 2
+        canvas.create_image(x, y, anchor="nw", image=tk_img)
+        canvas.image = tk_img
+        self.stage_labels[stage_idx].config(text="✓ Siap")
+
     def upload_image(self):
-        filepath = filedialog.askopenfilename(
-            title="Pilih Citra Daun",
-            filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp")]
-        )
+        filepath = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp")])
         if not filepath:
             return
         try:
             self.original_rgb = load_image(filepath)
-            self.display_image(self.original_rgb)
+            self.display_stage_image(0, self.original_rgb)
+            for i in range(1, 4):
+                self.stage_labels[i].config(text="Belum diproses")
             self.pred_label.config(text="Citra dimuat", bootstyle="info")
-            self.conf_label.config(text="")
             self.recom_text.config(state="normal")
             self.recom_text.delete(1.0, tk.END)
             self.recom_text.insert(tk.END, "Klik 'Analisis Sekarang' untuk memulai diagnosa.")
             self.recom_text.config(state="disabled")
             self.save_btn.config(state="disabled")
-            self.compare_btn.config(state="disabled")
             self.status_var.set(f"✓ Citra dimuat: {os.path.basename(filepath)}")
         except Exception as e:
             messagebox.showerror("Error", f"Gagal memuat gambar:\n{str(e)}")
-
-    def display_image(self, img_rgb):
-        self.placeholder_lbl.place_forget()
-        h, w = img_rgb.shape[:2]
-        cw, ch = self.canvas.winfo_width() or 800, self.canvas.winfo_height() or 600
-        scale = min(cw / w, ch / h, 1.0)
-        nw, nh = int(w * scale), int(h * scale)
-        img_resized = cv2.resize(img_rgb, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
-        self.tk_img = ImageTk.PhotoImage(Image.fromarray(img_resized))
-        self.canvas.delete("all")
-        x, y = (cw - nw) // 2, (ch - nh) // 2
-        self.canvas.create_image(x, y, anchor="nw", image=self.tk_img)
 
     def start_analysis(self):
         if self.original_rgb is None:
@@ -185,42 +193,49 @@ class LeafHealthAIApp:
 
     def _run_analysis(self):
         try:
-            leaf_mask, _, _ = segment_leaf(
+            # Tahap 1: Original
+            self.root.after(0, lambda: self.display_stage_image(0, self.original_rgb))
+
+            # Tahap 2: Segmentasi
+            leaf_mask, _, leaf_overlay = segment_leaf(
                 self.original_rgb,
                 h_min=self.h_min_var.get(),
                 h_max=self.h_max_var.get(),
                 s_min=self.s_min_var.get()
             )
-            # 🔴 GANTI: gunakan hue_min/hue_max, bukan a_star_thresh
-            lesion_mask, lesion_contours, overlay = detect_lesions(
+            self.root.after(0, lambda img=leaf_overlay: self.display_stage_image(1, img))
+
+            # Tahap 3: Deteksi Lesi
+            lesion_mask, lesion_contours, lesion_overlay = detect_lesions(
                 self.original_rgb,
                 leaf_mask,
                 hue_min=self.hue_min_var.get(),
                 hue_max=self.hue_max_var.get()
             )
+            self.root.after(0, lambda img=lesion_overlay: self.display_stage_image(2, img))
+
+            # Tahap 4: Klasifikasi
             features = extract_features(self.original_rgb, leaf_mask, lesion_mask, lesion_contours)
             label, conf, rec = classify_condition(features)
 
-            self.overlay_img = overlay
+            self.overlay_img = lesion_overlay
             self.features = features
             self.prediction = (label, conf, rec)
             self.root.after(0, self._update_ui_after_analysis)
+
         except Exception as e:
-            # ✅ PERBAIKI: gunakan lambda err=e
             self.root.after(0, lambda err=e: self._handle_analysis_error(err))
         finally:
             self.root.after(0, self._finish_processing)
 
     def _update_ui_after_analysis(self):
-        self.display_image(self.overlay_img)
         label, conf, rec = self.prediction
 
-        color_map = {
-            "🌱 Sehat": "success",
-            "🍄 Jamur": "warning",
-            "🦠 Bakteri": "danger",
-            "🐛 Hama/Defisiensi": "info"
-        }
+        # Update panel ke-4 (teks hasil)
+        self.stage_labels[3].config(text=f"{label}\n{conf:.0%}")
+
+        # Update panel kanan
+        color_map = {"❓ Tidak Terdeteksi": "secondary", "🍄 Jamur": "warning", "🦠 Bakteri": "danger"}
         style = color_map.get(label.split()[0], "secondary")
         self.pred_label.config(text=label, bootstyle=style)
         self.conf_label.config(text=f"Akurasi estimasi: {conf:.0%}")
@@ -237,8 +252,7 @@ class LeafHealthAIApp:
             self.feat_tree.insert("", "end", text=k.replace("_", " ").title(), values=(val_str,))
 
         self.save_btn.config(state="normal")
-        self.compare_btn.config(state="normal")
-        self.status_var.set("✓ Analisis selesai. Laporan & perbandingan siap.")
+        self.status_var.set("✓ Analisis selesai.")
 
     def _handle_analysis_error(self, e):
         messagebox.showerror("Error Analisis", f"Terjadi kesalahan:\n{str(e)}")
@@ -249,67 +263,24 @@ class LeafHealthAIApp:
         self.upload_btn.config(state="normal")
         self.is_processing = False
 
-    def show_comparison(self):
-        if not self.features:
-            return
-
-        f = self.features
-        healthy_ref = {
-            "lesion_area_ratio": "< 0.01 (1%)",
-            "entropy": "< 0.20",
-            "num_lesions": "0",
-            "avg_circularity": "—",
-            "median_hue": "40–70 (hijau daun)"
-        }
-        actual = {
-            "lesion_area_ratio": f"{f['lesion_area_ratio'] * 100:.1f}%",
-            "entropy": f"{f['entropy']:.2f}",
-            "num_lesions": str(f['num_lesions']),
-            "avg_circularity": f"{f['avg_circularity']:.2f}" if f['num_lesions'] > 0 else "—",
-            "median_hue": f"{f['median_hue']:.1f}"
-        }
-
-        comp_win = ttk.Toplevel(title="Perbandingan dengan Daun Sehat")
-        comp_win.geometry("550x300")
-        comp_win.resizable(False, False)
-
-        ttk.Label(comp_win, text="Perbandingan Fitur: Daun Ini vs Daun Sehat (Ideal)",
-                  font=("Segoe UI", 12, "bold")).pack(pady=10)
-
-        tree = ttk.Treeview(comp_win, columns=("actual", "healthy"), show="headings", height=5)
-        tree.heading("actual", text="Daun Ini")
-        tree.heading("healthy", text="Daun Sehat (Referensi)")
-        tree.column("actual", width=160, anchor="center")
-        tree.column("healthy", width=220, anchor="center")
-        tree.pack(padx=20, pady=5, fill="x")
-
-        metrics = [
-            ("Luas Lesi / Daun", actual["lesion_area_ratio"], healthy_ref["lesion_area_ratio"]),
-            ("Entropi Hue Lesi", actual["entropy"], healthy_ref["entropy"]),
-            ("Jumlah Lesi", actual["num_lesions"], healthy_ref["num_lesions"]),
-            ("Circularitas Rata-rata", actual["avg_circularity"], healthy_ref["avg_circularity"]),
-            ("Median Hue Lesi", actual["median_hue"], healthy_ref["median_hue"]),
-        ]
-
-        for name, act, ref in metrics:
-            item_id = tree.insert("", "end", values=(act, ref))
-            if (name == "Luas Lesi / Daun" and f['lesion_area_ratio'] > 0.01) or \
-               (name == "Entropi Hue Lesi" and f['entropy'] > 0.2) or \
-               (name == "Jumlah Lesi" and f['num_lesions'] > 0):
-                tree.tag_configure("abnormal", background="#fff3cd", foreground="#856404")
-                tree.item(item_id, tags=("abnormal",))
-
-        ttk.Button(comp_win, text="Tutup", bootstyle="secondary", command=comp_win.destroy, width=15).pack(pady=15)
+    def show_help(self):
+        help_text = (
+            "LeafHealthAI – Panduan\n\n"
+            "1. Upload foto daun mangga (utuh atau close-up lesi).\n"
+            "2. Klik [Analisis Sekarang].\n"
+            "3. Sistem akan tampilkan:\n"
+            "   • Garis hijau = tepi daun\n"
+            "   • Lingkaran merah = lesi penyakit\n"
+            "4. Hasil: Jamur atau Bakteri.\n\n"
+            "Catatan: Aplikasi ini hanya untuk daun mangga."
+        )
+        messagebox.showinfo("Panduan", help_text)
 
     def save_report(self):
-        filepath = filedialog.asksaveasfilename(
-            title="Simpan Laporan",
-            defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf")]
-        )
+        # Sesuaikan dengan overlay_img dan self.prediction
+        filepath = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")])
         if not filepath:
             return
-
         try:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 temp_path = tmp.name
@@ -321,12 +292,9 @@ class LeafHealthAIApp:
 
             c = canvas.Canvas(filepath, pagesize=A4)
             w, h = A4
-
             c.setFont("Helvetica-Bold", 18)
-            c.setFillColorRGB(0.2, 0.6, 0.2)
             c.drawString(50, h - 50, "🌿 LeafHealthAI — Laporan Diagnosa")
             c.setFont("Helvetica", 10)
-            c.setFillColorRGB(0, 0, 0)
             c.drawString(50, h - 70, f"Dibuat: {datetime.now().strftime('%d %B %Y, %H:%M')}")
 
             if os.path.exists(temp_path):
@@ -346,7 +314,6 @@ class LeafHealthAIApp:
                 if line.strip():
                     c.drawString(70, y, f"• {line.strip()}.")
                     y -= 14
-
             y -= 10
             c.setFont("Helvetica-Bold", 11)
             c.drawString(50, y, "Fitur yang Digunakan:")
@@ -364,22 +331,6 @@ class LeafHealthAIApp:
             messagebox.showinfo("Berhasil", "Laporan PDF berhasil disimpan!")
         except Exception as e:
             messagebox.showerror("Error", f"Gagal menyimpan PDF:\n{str(e)}")
-
-    def show_help(self):
-        help_text = (
-            "Panduan Penggunaan LeafHealthAI (Sesuai Dokumen)\n\n"
-            "1. Jalankan leafhealth_app.py.\n"
-            "2. Klik [Upload Citra Daun] → pilih citra.\n"
-            "3. Sesuaikan parameter:\n"
-            "   • Hue min/max, Sat min → segmentasi daun.\n"
-            "   • Hue Min/Max → deteksi lesi bakteri.\n"
-            "4. Klik [Analisis Sekarang]: sistem tampilkan overlay kontur & lesi.\n"
-            "5. Hasil muncul: prediksi, akurasi, rekomendasi.\n"
-            "6. Klik [Bandingkan dengan Daun Sehat].\n"
-            "7. Klik [Simpan Laporan] → ekspor PDF.\n\n"
-            "Tips: Gunakan latar polos & pencahayaan merata."
-        )
-        messagebox.showinfo("Panduan Resmi", help_text)
 
     def run(self):
         self.root.mainloop()
