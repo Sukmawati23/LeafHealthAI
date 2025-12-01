@@ -30,3 +30,11 @@ def compute_circularity(contour):
     if perimeter == 0:
         return 0.0
     return 4 * np.pi * area / (perimeter ** 2)
+
+def is_mango_leaf(contour):
+    x, y, w, h = cv2.boundingRect(contour)
+    if h == 0:
+        return False
+    aspect_ratio = w / h
+    # Daun mangga: umumnya lebih panjang → aspect ratio < 1 (tinggi > lebar)
+    return 0.2 < aspect_ratio < 0.7  # Sesuaikan setelah uji coba

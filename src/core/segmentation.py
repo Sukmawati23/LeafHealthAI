@@ -3,23 +3,25 @@ import cv2
 import numpy as np
 from ..utils.helpers import overlay_contours
 
-def segment_leaf(image_rgb, h_min=35, h_max=85, s_min=50, v_min=20, min_area_ratio=0.005):
-    """
-    Segmentasi daun menggunakan HSV thresholding + contour filtering.
-    Returns: (leaf_mask, leaf_contour, overlay_with_green_contour)
-    """
+def is_mango_leaf(contour):
+    x, y, w, h = cv2.boundingRect(contour)
+    if h == 0:
+        return False
+    aspect_ratio = w / h
+    return 0.2 < aspect_ratio < 0.7  # Daun mangga: panjang & sempit
+
+def segment_leaf(image_rgb, h_min=35, h_max=85, s_min=50, v_min=20, min_area_ratio=0.01):
     h_img, w_img = image_rgb.shape[:2]
-    min_area = max(int(h_img * w_img * min_area_ratio), 500)
+    min_area = max(int(h_img * w_img * min_area_ratio), 800)
 
     hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
     lower = np.array([h_min, s_min, v_min], dtype=np.uint8)
     upper = np.array([h_max, 255, 255], dtype=np.uint8)
     mask = cv2.inRange(hsv, lower, upper)
 
-    # Cleaning morfologi
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # tutup lubang
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)   # hapus noise
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -27,25 +29,22 @@ def segment_leaf(image_rgb, h_min=35, h_max=85, s_min=50, v_min=20, min_area_rat
         overlay = image_rgb.copy()
         return leaf_mask, None, overlay
 
-    # Filter kontur: luas & aspek rasio
     valid_contours = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
         if area < min_area:
             continue
-        x, y, w, h = cv2.boundingRect(cnt)
-        aspect_ratio = w / h if h != 0 else 0
-        if 0.3 < aspect_ratio < 3.0:
+        if is_mango_leaf(cnt):
             valid_contours.append(cnt)
 
-    # Gunakan kontur terbesar dari valid_contours atau semua kontur
-    leaf_contour = max(valid_contours or contours, key=cv2.contourArea)
+    if not valid_contours:
+        leaf_contour = max(contours, key=cv2.contourArea)
+    else:
+        leaf_contour = max(valid_contours, key=cv2.contourArea)
 
-    # Buat mask daun (filled)
     leaf_mask = np.zeros((h_img, w_img), dtype=np.uint8)
     cv2.drawContours(leaf_mask, [leaf_contour], -1, 255, thickness=cv2.FILLED)
 
-    # Overlay kontur HIJAU (RGB)
     overlay = image_rgb.copy()
     overlay = overlay_contours(overlay, [leaf_contour], color=(0, 255, 0), thickness=2)
 
