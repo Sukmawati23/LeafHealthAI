@@ -22,7 +22,7 @@ class LeafHealthAIApp:
     def __init__(self):
         self.root = ttk.Window(themename="morph")
         self.root.title("LeafHealthAI — Deteksi Penyakit Daun Mangga (Jamur/Bakteri)")
-        self.root.geometry("1400x800")
+        self.root.geometry("1400x820")
         self.root.minsize(1200, 700)
 
         try:
@@ -33,7 +33,9 @@ class LeafHealthAIApp:
             print("ℹ️ Icon tidak dimuat (aman diabaikan):", e)
 
         self.original_rgb = None
+        self.resized_rgb = None
         self.overlay_img = None
+        self.crop_lesion = None
         self.features = None
         self.prediction = None
         self.is_processing = False
@@ -88,23 +90,34 @@ class LeafHealthAIApp:
         self.save_btn = ttk.Button(control_frame, text="Simpan Laporan (PDF)", bootstyle="warning-outline", command=self.save_report, state="disabled")
         self.save_btn.pack(pady=5, ipady=3)
 
-        # 4-panel visualisasi
+        # 6-panel visualisasi (Original, Resize, Segmentasi, Deteksi Lesi, Crop, Hasil)
         viz_frame = ttk.Labelframe(main_frame, text="Tahapan Praproses & Visualisasi", padding=5)
         viz_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
 
         stages_frame = ttk.Frame(viz_frame)
         stages_frame.pack(fill="both", expand=True)
 
-        stage_labels = ["📸 Original", "🌿 Segmentasi Daun", "🔴 Deteksi Lesi", "✅ Hasil Diagnosa"]
+        stage_labels = [
+            "📸 Original",
+            "📏 Resize",
+            "🌿 Segmentasi Daun",
+            "🔴 Deteksi Lesi",
+            "🎯 Fokus Lesi (Crop)",
+            "✅ Hasil Diagnosa"
+        ]
         self.stage_canvases = []
         self.stage_labels = []
 
+        # create a 2x3 grid for 6 panels
         for i, title in enumerate(stage_labels):
             col = ttk.Labelframe(stages_frame, text=title, padding=3)
-            col.grid(row=0, column=i, padx=3, pady=3, sticky="nsew")
-            stages_frame.columnconfigure(i, weight=1)
+            r = i // 3
+            c = i % 3
+            col.grid(row=r, column=c, padx=3, pady=3, sticky="nsew")
+            stages_frame.columnconfigure(c, weight=1)
+            stages_frame.rowconfigure(r, weight=1)
 
-            canvas = tk.Canvas(col, bg="#fafafa", width=280, height=280, highlightthickness=1, highlightbackground="#ddd")
+            canvas = tk.Canvas(col, bg="#fafafa", width=320, height=240, highlightthickness=1, highlightbackground="#ddd")
             canvas.pack(fill="both", expand=True)
             self.stage_canvases.append(canvas)
 
@@ -132,7 +145,7 @@ class LeafHealthAIApp:
         self.feat_tree = ttk.Treeview(self.feat_frame, columns=("value",), show="tree headings", height=8)
         self.feat_tree.heading("#0", text="Fitur")
         self.feat_tree.heading("value", text="Nilai")
-        self.feat_tree.column("#0", width=150, anchor="w")
+        self.feat_tree.column("#0", width=180, anchor="w")
         self.feat_tree.column("value", width=90, anchor="e")
         self.feat_tree.pack(fill="both", expand=True, pady=2)
 
@@ -149,17 +162,25 @@ class LeafHealthAIApp:
         ttk.Label(frame, textvariable=var, font=("Courier", 8), foreground="#666").pack(anchor="e")
 
     def display_stage_image(self, stage_idx, img_rgb):
+        """
+        Menampilkan gambar pada canvas stage_idx.
+        img_rgb diasumsikan dalam format RGB uint8.
+        """
         canvas = self.stage_canvases[stage_idx]
         h, w = img_rgb.shape[:2]
-        cw, ch = 280, 280
+        cw, ch = int(canvas.winfo_width() or 320), int(canvas.winfo_height() or 240)
+        # jika ukuran canvas belum ter-render, gunakan default 320x240
+        cw = cw if cw > 10 else 320
+        ch = ch if ch > 10 else 240
         scale = min(cw / w, ch / h)
-        nw, nh = int(w * scale), int(h * scale)
+        nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
         img_resized = cv2.resize(img_rgb, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
         tk_img = ImageTk.PhotoImage(Image.fromarray(img_resized))
         canvas.delete("all")
         x, y = (cw - nw) // 2, (ch - nh) // 2
         canvas.create_image(x, y, anchor="nw", image=tk_img)
         canvas.image = tk_img
+        # update label kecil di bawah canvas
         self.stage_labels[stage_idx].config(text="✓ Siap")
 
     def upload_image(self):
@@ -168,9 +189,18 @@ class LeafHealthAIApp:
             return
         try:
             self.original_rgb = load_image(filepath)
+            # reset beberapa state
+            self.resized_rgb = None
+            self.overlay_img = None
+            self.crop_lesion = None
+            self.features = None
+            self.prediction = None
+
             self.display_stage_image(0, self.original_rgb)
-            for i in range(1, 4):
+            # set remaining panels to "Belum diproses"
+            for i in range(1, 6):
                 self.stage_labels[i].config(text="Belum diproses")
+                self.stage_canvases[i].delete("all")
             self.pred_label.config(text="Citra dimuat", bootstyle="info")
             self.recom_text.config(state="normal")
             self.recom_text.delete(1.0, tk.END)
@@ -185,6 +215,8 @@ class LeafHealthAIApp:
         if self.original_rgb is None:
             messagebox.showwarning("Peringatan", "Harap upload citra terlebih dahulu!")
             return
+        if self.is_processing:
+            return
         self.analyze_btn.config(state="disabled", text="Memproses...")
         self.upload_btn.config(state="disabled")
         self.is_processing = True
@@ -193,34 +225,66 @@ class LeafHealthAIApp:
 
     def _run_analysis(self):
         try:
-            # Tahap 1: Original
+            # Tahap 0: Original (sudah ditampilkan di upload)
             self.root.after(0, lambda: self.display_stage_image(0, self.original_rgb))
 
-            # Tahap 2: Segmentasi
-            leaf_mask, _, leaf_overlay = segment_leaf(
-                self.original_rgb,
+            # Tahap 1: Resize (640x480)
+            resized = cv2.resize(self.original_rgb, (640, 480), interpolation=cv2.INTER_AREA)
+            self.resized_rgb = resized.copy()
+            self.root.after(0, lambda img=resized: self.display_stage_image(1, img))
+
+            # Tahap 2: Segmentasi (gunakan gambar resize)
+            leaf_mask, leaf_contour, leaf_overlay = segment_leaf(
+                self.resized_rgb,
                 h_min=self.h_min_var.get(),
                 h_max=self.h_max_var.get(),
                 s_min=self.s_min_var.get()
             )
-            self.root.after(0, lambda img=leaf_overlay: self.display_stage_image(1, img))
+            # overlay leaf_overlay sudah RGB
+            self.root.after(0, lambda img=leaf_overlay: self.display_stage_image(2, img))
 
-            # Tahap 3: Deteksi Lesi
+            # Tahap 3: Deteksi Lesi (gunakan gambar resize)
             lesion_mask, lesion_contours, lesion_overlay = detect_lesions(
-                self.original_rgb,
+                self.resized_rgb,
                 leaf_mask,
                 hue_min=self.hue_min_var.get(),
                 hue_max=self.hue_max_var.get()
             )
-            self.root.after(0, lambda img=lesion_overlay: self.display_stage_image(2, img))
+            self.root.after(0, lambda img=lesion_overlay: self.display_stage_image(3, img))
 
-            # Tahap 4: Klasifikasi
-            features = extract_features(self.original_rgb, leaf_mask, lesion_mask, lesion_contours)
+            # Tahap 4: Crop fokus lesi (otomatis ambil lesi terbesar)
+            if lesion_contours and len(lesion_contours) > 0:
+                main_cnt = max(lesion_contours, key=cv2.contourArea)
+                x, y, w, h = cv2.boundingRect(main_cnt)
+                # tambahkan margin sedikit agar tidak terpotong
+                pad = int(0.15 * max(w, h))
+                x1 = max(0, x - pad)
+                y1 = max(0, y - pad)
+                x2 = min(self.resized_rgb.shape[1], x + w + pad)
+                y2 = min(self.resized_rgb.shape[0], y + h + pad)
+                crop = self.resized_rgb[y1:y2, x1:x2]
+                # jika crop kosong karena ukuran kecil -> buat placeholder hitam
+                if crop.size == 0:
+                    crop = np.zeros((300, 300, 3), dtype=np.uint8)
+                else:
+                    # resize crop ke ukuran visual yang konsisten (300x300)
+                    crop = cv2.resize(crop, (300, 300), interpolation=cv2.INTER_AREA)
+            else:
+                crop = np.zeros((300, 300, 3), dtype=np.uint8)
+
+            self.crop_lesion = crop.copy()
+            self.root.after(0, lambda img=crop: self.display_stage_image(4, img))
+
+            # Tahap 5: Ekstraksi fitur dan klasifikasi (gunakan mask & kontur dari resize)
+            features = extract_features(self.resized_rgb, leaf_mask, lesion_mask, lesion_contours)
             label, conf, rec = classify_condition(features)
 
+            # overlay final: gunakan lesion_overlay (dari detect_lesions)
             self.overlay_img = lesion_overlay
             self.features = features
             self.prediction = (label, conf, rec)
+
+            # update UI akhir (panel hasil)
             self.root.after(0, self._update_ui_after_analysis)
 
         except Exception as e:
@@ -231,12 +295,17 @@ class LeafHealthAIApp:
     def _update_ui_after_analysis(self):
         label, conf, rec = self.prediction
 
-        # Update panel ke-4 (teks hasil)
-        self.stage_labels[3].config(text=f"{label}\n{conf:.0%}")
+        # Update panel ke-6 (index 5) dengan label ringkas
+        try:
+            self.stage_labels[5].config(text=f"{label}\n{conf:.0%}")
+        except Exception:
+            pass
 
         # Update panel kanan
         color_map = {"❓ Tidak Terdeteksi": "secondary", "🍄 Jamur": "warning", "🦠 Bakteri": "danger"}
-        style = color_map.get(label.split()[0], "secondary")
+        # gunakan first token (emoji) atau kata pertama sebagai key attempt
+        key = label.split()[0] if isinstance(label, str) else label
+        style = color_map.get(key, "secondary")
         self.pred_label.config(text=label, bootstyle=style)
         self.conf_label.config(text=f"Akurasi estimasi: {conf:.0%}")
 
@@ -245,18 +314,25 @@ class LeafHealthAIApp:
         self.recom_text.insert(tk.END, rec)
         self.recom_text.config(state="disabled")
 
+        # tampilkan fitur di treeview
         for item in self.feat_tree.get_children():
             self.feat_tree.delete(item)
-        for k, v in self.features.items():
-            val_str = f"{v:.4f}" if isinstance(v, float) else str(v)
-            self.feat_tree.insert("", "end", text=k.replace("_", " ").title(), values=(val_str,))
+        if isinstance(self.features, dict):
+            for k, v in self.features.items():
+                if isinstance(v, float):
+                    val_str = f"{v:.4f}"
+                else:
+                    val_str = str(v)
+                self.feat_tree.insert("", "end", text=k.replace("_", " ").title(), values=(val_str,))
 
+        # enable save report
         self.save_btn.config(state="normal")
         self.status_var.set("✓ Analisis selesai.")
 
     def _handle_analysis_error(self, e):
         messagebox.showerror("Error Analisis", f"Terjadi kesalahan:\n{str(e)}")
         self.pred_label.config(text="Gagal Analisis", bootstyle="danger")
+        self.status_var.set("✗ Analisis gagal.")
 
     def _finish_processing(self):
         self.analyze_btn.config(state="normal", text="Analisis Sekarang")
@@ -268,11 +344,14 @@ class LeafHealthAIApp:
             "LeafHealthAI – Panduan\n\n"
             "1. Upload foto daun mangga (utuh atau close-up lesi).\n"
             "2. Klik [Analisis Sekarang].\n"
-            "3. Sistem akan tampilkan:\n"
-            "   • Garis hijau = tepi daun\n"
-            "   • Lingkaran merah = lesi penyakit\n"
-            "4. Hasil: Jamur atau Bakteri.\n\n"
-            "Catatan: Aplikasi ini hanya untuk daun mangga."
+            "3. Sistem akan tampilkan tahapan:\n"
+            "   • Original\n"
+            "   • Resize ke 640×480\n"
+            "   • Segmentasi daun (HSV)\n"
+            "   • Deteksi lesi (lingkaran merah)\n"
+            "   • Fokus lesi (crop otomatis)\n"
+            "   • Hasil diagnosa (Jamur/Bakteri) beserta rekomendasi\n\n"
+            "Catatan: Aplikasi ini hanya untuk daun mangga dan berbasis aturan sederhana."
         )
         messagebox.showinfo("Panduan", help_text)
 
@@ -284,7 +363,18 @@ class LeafHealthAIApp:
         try:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 temp_path = tmp.name
-            save_image(temp_path, self.overlay_img)
+            if self.overlay_img is None:
+                # fallback: simpan resized atau crop
+                if self.resized_rgb is not None:
+                    save_image(temp_path, self.resized_rgb)
+                elif self.original_rgb is not None:
+                    save_image(temp_path, self.original_rgb)
+                else:
+                    # buat placeholder
+                    placeholder = np.zeros((300, 300, 3), dtype=np.uint8)
+                    save_image(temp_path, placeholder)
+            else:
+                save_image(temp_path, self.overlay_img)
 
             from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import A4
@@ -301,7 +391,7 @@ class LeafHealthAIApp:
                 c.drawImage(ImageReader(temp_path), 50, h - 360, width=500, height=280)
 
             y = h - 380
-            label, conf, rec = self.prediction
+            label, conf, rec = self.prediction if self.prediction is not None else ("-", 0.0, "-")
             c.setFont("Helvetica-Bold", 12)
             c.drawString(50, y, f"Diagnosa: {label}")
             y -= 20
@@ -319,13 +409,14 @@ class LeafHealthAIApp:
             c.drawString(50, y, "Fitur yang Digunakan:")
             y -= 18
             c.setFont("Helvetica", 9)
-            for k, v in self.features.items():
-                val = f"{v:.4f}" if isinstance(v, float) else str(v)
-                c.drawString(70, y, f"{k.replace('_', ' ').title():<22} : {val}")
-                y -= 14
-                if y < 100:
-                    c.showPage()
-                    y = h - 50
+            if isinstance(self.features, dict):
+                for k, v in self.features.items():
+                    val = f"{v:.4f}" if isinstance(v, float) else str(v)
+                    c.drawString(70, y, f"{k.replace('_', ' ').title():<22} : {val}")
+                    y -= 14
+                    if y < 100:
+                        c.showPage()
+                        y = h - 50
             c.save()
             os.unlink(temp_path)
             messagebox.showinfo("Berhasil", "Laporan PDF berhasil disimpan!")
@@ -334,3 +425,9 @@ class LeafHealthAIApp:
 
     def run(self):
         self.root.mainloop()
+
+
+# if run as script (optional)
+if __name__ == "__main__":
+    app = LeafHealthAIApp()
+    app.run()
