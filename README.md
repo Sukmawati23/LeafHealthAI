@@ -1,2 +1,2 @@
 🌿 LeafHealthAI  
-_Aplikasi Deteksi dan Klasifikasi Penyakit Daun Tanaman Berbasis Citra Digital_
+_Aplikasi Deteksi Penyakit Daun Mangga (Berjamu/Bakteri) Berbasis Citra Digital_
